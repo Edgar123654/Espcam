@@ -8,9 +8,9 @@ from ultralytics import YOLO  # Your AI model
 
 # ======================= CONFIGURATION =======================
 # ESP-CAM Configuration
-ESP_CAM_IP = "192.168.1.100"  # Replace with your ESP-CAM IP
-CAPTURE_URL = f"http://{ESP_CAM_IP}/capture"
-STREAM_URL = f"http://{ESP_CAM_IP}/stream"
+ESP_CAM_IP = "192.168.0.45"  # Replace with your ESP-CAM IP
+CAPTURE_URL = f"http://{192.168.0.45}/capture"
+STREAM_URL = f"http://{192.168.0.45}/stream"
 
 # MQTT Configuration
 MQTT_BROKER_HOST = "35.198.11.30"
