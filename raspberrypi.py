@@ -8,15 +8,15 @@ from ultralytics import YOLO  # Your AI model
 
 # ======================= CONFIGURATION =======================
 # ESP-CAM Configuration
-ESP_CAM_IP = "192.168.0.45"  # Replace with your ESP-CAM IP
+ESP_CAM_IP = "192.168.5.148"  # Replace with your ESP-CAM IP
 CAPTURE_URL = f"http://{ESP_CAM_IP }/capture"
 STREAM_URL = f"http://{ESP_CAM_IP }/stream"
 
 # MQTT Configuration
 MQTT_BROKER_HOST = "35.198.11.30"
 MQTT_BROKER_PORT = 1883
-MQTT_USERNAME = "<USUARIO>"
-MQTT_PASSWORD = "<SENHA>"
+MQTT_USERNAME = "rpi-user"
+MQTT_PASSWORD = "eRtL)5$H01L!"
 MQTT_TOPIC_BASE = "store/loja1/shelf/gondolaA/events"
 
 # AI Configuration
