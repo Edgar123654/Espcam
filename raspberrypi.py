@@ -10,7 +10,7 @@ from ultralytics import YOLO  # YOLOv8-pose para detecção de mãos
 
 # ======================= CONFIGURATION =======================
 # ESP-CAM Configuration
-ESP_CAM_IP = "192.168.5.148"  # Replace with your ESP-CAM IP
+ESP_CAM_IP = "192.168.0.71"  # Replace with your ESP-CAM IP
 CAPTURE_URL = f"http://{ESP_CAM_IP}/capture"
 STREAM_URL = f"http://{ESP_CAM_IP}/stream"
 
