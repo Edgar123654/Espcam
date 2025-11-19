@@ -19,7 +19,7 @@ MQTT_BROKER_HOST = "35.198.11.30"
 MQTT_BROKER_PORT = 1883
 MQTT_USERNAME = "rpi-user"
 MQTT_PASSWORD = "eRtL)5$H01L!"
-MQTT_TOPIC_BASE = "store/loja1/shelf/gondolaA/events"
+MQTT_TOPIC_BASE = "events"
 
 # AI Configuration - YOLOv8-pose pré-treinado
 # NOTA: O YOLOv8-pose padrão detecta pessoas com 17 keypoints corporais (não mãos diretamente)
