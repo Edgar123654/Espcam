@@ -6,7 +6,7 @@ import uuid
 import os
 import numpy as np
 import paho.mqtt.client as mqtt
-from ultralytics import YOLO  # YOLOv8-pose para detecção de mãos
+from ultralytics import YOLO  # YOLOv8-seg para detecção de produtos por segmentação
 
 # ======================= CONFIGURATION =======================
 # ESP-CAM Configuration
@@ -21,31 +21,25 @@ MQTT_USERNAME = "rpi-user"
 MQTT_PASSWORD = "eRtL)5$H01L!"
 MQTT_TOPIC_BASE = "store/loja1/shelf/gondolaA/events"
 
-# AI Configuration - YOLOv8-pose pré-treinado
-# NOTA: O YOLOv8-pose padrão detecta pessoas com 17 keypoints corporais (não mãos diretamente)
-# A detecção de gestos é uma aproximação baseada na posição dos pulsos.
-# Para detecção precisa de gestos de mãos, considere:
-# - MediaPipe Hands (mais preciso, 21 keypoints por mão)
-# - Modelo YOLOv8 treinado com dataset Ultralytics Hand Keypoints
-MODEL_PATH = "yolov8n-pose.pt"  # Modelo YOLOv8-pose pré-treinado
-CONFIDENCE_THRESHOLD = 0.5  # Threshold ajustado para detecção
+# AI Configuration - YOLOv8-seg pré-treinado
+# Utiliza segmentação para detectar produtos específicos nas prateleiras.
+# Recomenda-se treinar um modelo customizado (ex.: best-products-seg.pt) para classes próprias.
+MODEL_PATH = "yolov8n-seg.pt"  # Modelo YOLOv8-seg pré-treinado
+CONFIDENCE_THRESHOLD = 0.5  # Threshold para detecção de produtos
 # =============================================================
 
 # Load AI model
-print("🔄 Carregando modelo YOLOv8-pose...")
+print("🔄 Carregando modelo YOLOv8-seg...")
 model = YOLO(MODEL_PATH)
 print("✅ Modelo carregado com sucesso!")
 
-# Gesture database (mapeia gestos detectados)
-GESTURE_DATABASE = {
-    "punho": {"name": "Punho Fechado", "action": "fechado"},
-    "um": {"name": "Um Dedo", "action": "apontar"},
-    "dois": {"name": "Dois Dedos", "action": "vitoria"},
-    "tres": {"name": "Três Dedos", "action": "contagem"},
-    "quatro": {"name": "Quatro Dedos", "action": "contagem"},
-    "cinco": {"name": "Mão Aberta", "action": "aberto"},
-    "ok": {"name": "OK", "action": "confirmacao"},
-    "desconhecido": {"name": "Gesto Desconhecido", "action": "indefinido"}
+# Product database (map class IDs to product info)
+PRODUCT_DATABASE = {
+    0: {"name": "Coca-Cola 350ml", "sku": "SKU-COCA-350", "price": 7.50},
+    1: {"name": "Pepsi 350ml", "sku": "SKU-PEPSI-350", "price": 6.99},
+    2: {"name": "Guaraná 350ml", "sku": "SKU-GUARANA-350", "price": 6.49},
+    3: {"name": "Água Mineral 500ml", "sku": "SKU-AGUA-500", "price": 4.90},
+    # Adicione/atualize seus produtos conforme o treinamento do modelo
 }
 
 class ESPCamProcessor:
@@ -86,93 +80,53 @@ class ESPCamProcessor:
             print(f"❌ Erro ao capturar imagem: {e}")
         return None
     
-    def detect_gesture_from_body_pose(self, body_keypoints):
-        """Detecta gesto simplificado baseado na pose do corpo (YOLOv8-pose padrão tem 17 keypoints)"""
-        # YOLOv8-pose padrão detecta pessoas com 17 keypoints:
-        # 0: nariz, 1: olho esquerdo, 2: olho direito, 3: orelha esquerda, 4: orelha direita
-        # 5: ombro esquerdo, 6: ombro direito, 7: cotovelo esquerdo, 8: cotovelo direito
-        # 9: pulso esquerdo, 10: pulso direito, 11: quadril esquerdo, 12: quadril direito
-        # 13: joelho esquerdo, 14: joelho direito, 15: tornozelo esquerdo, 16: tornozelo direito
-        
-        if body_keypoints is None or len(body_keypoints) < 17:
-            return "desconhecido"
-        
-        # Usar posição dos pulsos para detectar gestos básicos
-        left_wrist = body_keypoints[9] if body_keypoints[9][2] > 0.5 else None  # [x, y, visibility]
-        right_wrist = body_keypoints[10] if body_keypoints[10][2] > 0.5 else None
-        
-        # Detecção simplificada baseada na posição dos pulsos
-        # Esta é uma aproximação - para detecção precisa de gestos, use MediaPipe ou modelo customizado
-        if left_wrist is not None and right_wrist is not None:
-            # Calcular distância entre pulsos
-            distance = np.sqrt((left_wrist[0] - right_wrist[0])**2 + (left_wrist[1] - right_wrist[1])**2)
-            
-            # Altura relativa dos pulsos
-            avg_wrist_y = (left_wrist[1] + right_wrist[1]) / 2
-            
-            # Gestos simplificados baseados na posição
-            if distance < 50:  # Mãos próximas
-                return "punho"  # ou "mãos juntas"
-            elif left_wrist[1] < body_keypoints[5][1] or right_wrist[1] < body_keypoints[6][1]:
-                # Pulsos acima dos ombros - mão levantada
-                return "cinco"  # mão aberta/levantada
-            else:
-                return "desconhecido"
-        elif left_wrist is not None or right_wrist is not None:
-            # Apenas uma mão visível
-            wrist = left_wrist if left_wrist is not None else right_wrist
-            shoulder = body_keypoints[5] if left_wrist is not None else body_keypoints[6]
-            
-            if wrist[1] < shoulder[1]:  # Pulso acima do ombro
-                return "um"  # mão levantada
-            else:
-                return "desconhecido"
-        
-        return "desconhecido"
-    
     def process_with_ai(self, image_path):
-        """Process image with YOLOv8-pose para detecção de mãos e gestos"""
+        """Process image with YOLOv8-seg para detecção de produtos"""
         try:
             results = model(image_path, conf=CONFIDENCE_THRESHOLD)
             
             detections = []
             for result in results:
                 boxes = result.boxes
-                keypoints = result.keypoints
+                masks = result.masks
                 
-                if boxes is not None and keypoints is not None:
+                if boxes is not None:
                     for i, box in enumerate(boxes):
-                        # Filtrar apenas detecções de pessoas (classe 0 no COCO)
                         cls_id = int(box.cls.item())
-                        if cls_id != 0:  # Pular se não for pessoa
-                            continue
-                        
                         confidence = box.conf.item()
                         
-                        # Obter keypoints do corpo (YOLOv8-pose padrão detecta pessoas com 17 keypoints)
-                        # NOTA: Para detecção precisa de gestos de mãos, considere usar:
-                        # - MediaPipe Hands (mais preciso para mãos)
-                        # - Modelo YOLOv8 treinado com dataset Hand Keypoints
-                        body_keypoints = None
+                        product_info = PRODUCT_DATABASE.get(
+                            cls_id,
+                            {"name": f"Produto_{cls_id}", "sku": f"SKU-{cls_id}", "price": 0.0},
+                        )
+                        bbox = box.xywh.tolist()[0]  # [x, y, width, height]
                         
-                        if keypoints.data is not None and len(keypoints.data) > i:
-                            body_keypoints = keypoints.data[i].cpu().numpy()
+                        segmentation = None
+                        mask_area = None
+                        mask_ratio = None
                         
-                        # Detectar gesto baseado na pose do corpo (aproximação)
-                        gesture = "desconhecido"
-                        if body_keypoints is not None and len(body_keypoints) >= 17:
-                            gesture = self.detect_gesture_from_body_pose(body_keypoints)
-                        
-                        gesture_info = GESTURE_DATABASE.get(gesture, GESTURE_DATABASE["desconhecido"])
+                        if masks is not None and masks.data is not None and len(masks.data) > i:
+                            mask_tensor = masks.data[i]
+                            mask_array = mask_tensor.cpu().numpy()
+                            mask_area = int(np.count_nonzero(mask_array))
+                            total_pixels = mask_array.shape[0] * mask_array.shape[1]
+                            mask_ratio = float(mask_area) / float(total_pixels) if total_pixels else 0.0
+                            
+                            try:
+                                segmentation = masks.xy[i].tolist()
+                            except Exception:
+                                segmentation = None
                         
                         detection = {
                             "class_id": cls_id,
-                            "gesture": gesture,
-                            "gesture_name": gesture_info["name"],
-                            "gesture_action": gesture_info["action"],
+                            "product_name": product_info["name"],
+                            "sku": product_info.get("sku"),
+                            "price": float(product_info.get("price", 0.0)),
                             "confidence": confidence,
-                            "bbox": box.xywh.tolist()[0],  # [x, y, width, height]
-                            "keypoints": body_keypoints.tolist() if body_keypoints is not None else None
+                            "bbox": bbox,
+                            "mask_area": mask_area,
+                            "mask_ratio": mask_ratio,
+                            "segmentation": segmentation,
                         }
                         detections.append(detection)
             
@@ -190,48 +144,51 @@ class ESPCamProcessor:
             "device_id": "esp-cam-01",
             "shelf_id": "gondolaA",
             "zone_id": int(detection["bbox"][0] // 100),  # Simple zone calculation
-            "gesture": detection["gesture"],
-            "gesture_name": detection["gesture_name"],
-            "gesture_action": detection["gesture_action"],
+            "product_name": detection["product_name"],
+            "sku": detection.get("sku"),
+            "price": detection.get("price"),
             "duration": duration,
             "confidence": float(detection["confidence"]),
             "timestamp_end": time.time()
         }
         
-        # Adicionar keypoints se disponíveis (opcional, pode ser grande)
-        if detection.get("keypoints") is not None:
-            event_data["keypoints"] = detection["keypoints"]
+        if detection.get("mask_area") is not None:
+            event_data["mask_area"] = detection["mask_area"]
+        if detection.get("mask_ratio") is not None:
+            event_data["mask_ratio"] = detection["mask_ratio"]
+        if detection.get("segmentation") is not None:
+            # Segmentation pode ser um payload grande; serialize apenas se necessário
+            event_data["segmentation"] = detection["segmentation"]
         
         topic = f"{MQTT_TOPIC_BASE}/{event_data['device_id']}"
         self.mqtt_client.publish(topic, json.dumps(event_data))
-        print(f"✅ Gesto detectado: {event_data['gesture_name']} (Conf: {event_data['confidence']:.2f})")
+        print(f"✅ Produto detectado: {event_data['product_name']} (Conf: {event_data['confidence']:.2f})")
     
     def track_interactions(self, detections):
-        """Track how long gestures are being performed"""
+        """Track how long produtos estão sendo manipulados"""
         current_time = time.time()
         
         for detection in detections:
-            gesture_key = detection["gesture"]
+            product_key = detection.get("sku") or detection["product_name"]
             
             # Verificar se é uma continuação da mesma interação
-            if gesture_key in self.last_detection_time:
-                time_diff = current_time - self.last_detection_time[gesture_key]
+            if product_key in self.last_detection_time:
+                time_diff = current_time - self.last_detection_time[product_key]
                 if time_diff < 2.0:  # Mesma interação se dentro de 2 segundos
-                    # Só enviar evento se o gesto mudou ou após intervalo maior
-                    if time_diff >= 0.5:  # Enviar a cada 0.5s para gestos contínuos
+                    if time_diff >= 0.5:  # Enviar a cada 0.5s para interações contínuas
                         detection["duration"] = time_diff
                         self.send_event(detection, time_diff)
             else:
-                # Novo gesto detectado, enviar imediatamente
+                # Novo produto detectado, enviar imediatamente
                 detection["duration"] = 0
                 self.send_event(detection, 0)
             
             # Atualizar último tempo de detecção
-            self.last_detection_time[gesture_key] = current_time
+            self.last_detection_time[product_key] = current_time
     
     def run(self):
         """Main processing loop"""
-        print("🚀 Iniciando processamento da ESP-CAM para detecção de mãos e gestos...")
+        print("🚀 Iniciando processamento da ESP-CAM para detecção de produtos (segmentação)...")
         
         try:
             while True:
@@ -245,10 +202,10 @@ class ESPCamProcessor:
                 detections = self.process_with_ai(image_path)
                 
                 if detections:
-                    print(f"✋ {len(detections)} mão(s)/gesto(s) detectado(s)")
+                    print(f"🛒 {len(detections)} produto(s) detectado(s)")
                     self.track_interactions(detections)
                 else:
-                    print("⏳ Nenhuma mão detectada...")
+                    print("⏳ Nenhum produto detectado...")
                 
                 # Limpar arquivo temporário
                 try:
